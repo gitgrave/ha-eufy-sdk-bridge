@@ -33,7 +33,16 @@ export async function writeGo2rtcConfig(cfg, devices) {
     // reads as a broken stream: Home Assistant aborts with "Timestamp discontinuity detected: last dts =
     // 0, dts = 4219155056" seconds after the picture starts flowing. Re-stamping costs nothing here —
     // the feed is remuxed, not transcoded, and a live view has no timeline to preserve.
-    lines.push(`  ${d.sn}: ffmpeg:http://${cfg.selfHost}:${cfg.port}/stream/${d.sn}#video=copy#async`);
+    const base = `http://${cfg.selfHost}:${cfg.port}`;
+    const video = `ffmpeg:${base}/stream/${d.sn}#video=copy#async`;
+    if (!cfg.streamAudio) {
+      lines.push(`  ${d.sn}: ${video}`);
+      continue;
+    }
+    // go2rtc merges tracks from several sources of one stream. The ADTS feed is re-encoded, not copied:
+    // ffmpeg's RTP muxer refuses AAC without global headers ("AAC with no global headers is currently not
+    // supported"), so `#audio=copy` yields no track. Opus is offered next to AAC for WebRTC.
+    lines.push(`  ${d.sn}:`, `    - ${video}`, `    - ffmpeg:${base}/audio/${d.sn}#audio=aac#audio=opus`);
   }
   const yaml = lines.join("\n") + "\n";
   await mkdir(dirname(cfg.go2rtcConfig), { recursive: true }).catch(() => {});

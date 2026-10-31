@@ -15,12 +15,18 @@ const cams = [
   { sn: "SENSOR1" }, // no stream path → not a camera, must not appear
 ];
 
-async function generate() {
+async function generate(extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "go2rtc-"));
   const file = path.join(dir, "go2rtc.yaml");
-  const sns = await writeGo2rtcConfig({ go2rtcConfig: file, selfHost: "127.0.0.1", port: 3000 }, cams);
+  const sns = await writeGo2rtcConfig({ go2rtcConfig: file, selfHost: "127.0.0.1", port: 3000, ...extra }, cams);
   return { yaml: fs.readFileSync(file, "utf8"), sns };
 }
+
+test("streamAudio adds the /audio source next to the video source", async () => {
+  const { yaml } = await generate({ streamAudio: true });
+  assert.match(yaml, / {2}CAM1:\n {4}- ffmpeg:http:\/\/127\.0\.0\.1:3000\/stream\/CAM1#video=copy#async\n/);
+  assert.match(yaml, / {4}- ffmpeg:http:\/\/127\.0\.0\.1:3000\/audio\/CAM1#audio=aac#audio=opus\n/);
+});
 
 test("every camera stream is generated with #async", async () => {
   const { yaml, sns } = await generate();

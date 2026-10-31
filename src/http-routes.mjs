@@ -406,6 +406,59 @@ export function createHttpHandler(ctx) {
       }
     }
 
+    // Live audio (BRIDGE_STREAM_AUDIO): go2rtc pulls this next to /stream only while a consumer wants audio.
+    // It joins the same per-camera client, so it rides the shared live source /stream already opened rather
+    // than waking the camera a second time. Gating (idle suspension, failure backoff) mirrors /stream, but a
+    // failure here never arms the backoff: video owns the camera's reachability verdict.
+    if (kind === "audio" && sn && cfg.streamAudio) {
+      if (cfg.streamIdleMs && idleSuspended.has(sn)) return json(res, 503, { error: "stream idle-suspended" });
+      if ((ctx.streamBackoffMs?.(sn) ?? 0) > 0) return json(res, 503, { error: "stream backing off" });
+      let gone = false;
+      const onGone = () => (gone = true);
+      res.once("close", onGone);
+      let consumer;
+      try {
+        const client = await openStreamClient(sn, cfg);
+        const cam = (await client.getDevice(sn)).camera?.();
+        if (!cam?.live) {
+          res.off("close", onGone);
+          return json(res, 404, { error: "no live audio on this device" });
+        }
+        if (gone) return;
+        const budget = cfg.streamBatteryBudgetMs;
+        consumer = await cam.live(budget ? { batteryBudgetMs: budget } : undefined);
+      } catch (e) {
+        res.off("close", onGone);
+        if (isSupersededStreamClient(e)) return json(res, 503, { error: String(e?.message ?? e) });
+        return json(res, 502, { error: String(e?.message ?? e) });
+      }
+      res.off("close", onGone);
+      let ended = false;
+      const end = () => {
+        if (ended) return;
+        ended = true;
+        consumer.stop();
+        if (!res.writableEnded) res.destroy();
+      };
+      if (gone) return end();
+      consumer.on("audio", (frame) => {
+        // ADTS carries AAC-LC only; AAC-ELD and G.711 have no self-describing framing ffmpeg can probe.
+        if (frame.codec !== "aac-lc") {
+          ctx.eventLog?.(`/audio ${sn} — unsupported live audio codec ${frame.codec}, closing`);
+          return end();
+        }
+        if (!res.headersSent) {
+          res.writeHead(200, { "content-type": "audio/aac", "cache-control": "no-cache" });
+          ctx.eventLog?.(`/audio ${sn} — streaming ${frame.codec}`);
+        }
+        res.write(frame.data);
+      });
+      consumer.on("error", end);
+      consumer.on("stop", end);
+      req.on("close", end);
+      return;
+    }
+
     return json(res, 404, { error: "not found" });
   };
 }

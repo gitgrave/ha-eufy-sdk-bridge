@@ -116,6 +116,9 @@ export function loadConfig(env = process.env) {
     // keeps the SDK default. Mains cameras ignore it, and closing the last viewer still ends the session
     // at once. Positive whole ms; anything else → default.
     streamBatteryBudgetMs: positiveInt(env.STREAM_BATTERY_BUDGET_MS),
+    // Live audio: serve /audio/<sn> (ADTS AAC from the same shared live source) as a second go2rtc source
+    // per camera, so consumers get sound next to the picture. Off by default — unchanged behaviour.
+    streamAudio: truthy(env.BRIDGE_STREAM_AUDIO),
     // How long after the push /clip waits before downloading a HomeBase 2 recording, so the station has
     // finished writing it. Set it at least to the camera's clip length. Default 30s.
     clipSettleMs: env.CLIP_SETTLE_MS != null ? Number(env.CLIP_SETTLE_MS) : 30_000,
